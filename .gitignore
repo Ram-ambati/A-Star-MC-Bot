@@ -1,0 +1,45 @@
+# Gradle / build output
+.gradle/
+build/
+out/
+classes/
+
+# Eclipse
+*.launch
+.settings/
+bin/
+.classpath
+.project
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# VS Code
+.vscode/
+
+# Markdown notes/docs
+*.md
+
+# OS files
+*.DS_Store
+Thumbs.db
+desktop.ini
+
+# Fabric / Minecraft runtime data
+run/
+
+# Java diagnostics
+hs_err_*.log
+replay_*.log
+*.hprof
+*.jfr
+
+# Logs and local configuration
+*.log
+*.log.gz
+.env
+.env.*
+local.properties
