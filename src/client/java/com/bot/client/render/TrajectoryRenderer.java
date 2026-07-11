@@ -23,10 +23,9 @@ public class TrajectoryRenderer {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final int PATH_COLOR = 0xFF00FFFF;
     private static final int TARGET_COLOR = 0xFFFFFF00;
-    private static final int NODE_COLOR = 0xFF66CCFF;
+
     private static final float PATH_LINE_WIDTH = 4.0F;
     private static final float MARKER_LINE_WIDTH = 2.0F;
-    private static final float NODE_MARKER_LINE_WIDTH = 1.5F;
 
     private final MovementController movementController;
     private boolean disabledDueToRenderError;

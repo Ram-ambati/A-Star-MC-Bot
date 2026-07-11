@@ -6,7 +6,7 @@ import com.bot.client.render.TrajectoryRenderer;
 import com.mojang.logging.LogUtils;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.minecraft.client.MinecraftClient;
+
 import org.slf4j.Logger;
 
 /**

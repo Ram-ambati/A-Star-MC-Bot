@@ -191,7 +191,7 @@ public final class BlockAnalyzer {
 
         BlockState state = world.getBlockState(pos);
         return state.isAir()
-                || (!state.isLiquid() && state.getCollisionShape(world, pos).isEmpty());
+                || (state.getFluidState().isEmpty() && state.getCollisionShape(world, pos).isEmpty());
     }
 
     public static boolean isWater(ClientWorld world, BlockPos pos) {

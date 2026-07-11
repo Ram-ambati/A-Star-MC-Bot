@@ -1,9 +1,7 @@
 package com.bot.client.movement.movements;
 
 import com.bot.client.world.NavigationNode;
-import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
-import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.math.Vec3d;
 
 public abstract class MovementBase implements IMovement {
