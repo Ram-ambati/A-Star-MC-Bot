@@ -1,7 +1,10 @@
 package com.bot.client.movement;
 
-import com.bot.client.world.BlockAnalyzer;
-import com.bot.client.world.EnvironmentScan;
+import com.bot.client.movement.movements.IMovement;
+import com.bot.client.movement.movements.MovementHelper;
+import com.bot.client.movement.movements.MovementState;
+import com.bot.client.movement.movements.MovementStatus;
+import com.bot.client.pathfinding.LocalRoutePlanner;
 import com.bot.client.world.NavigationNode;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -10,78 +13,72 @@ import java.util.List;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.world.ClientWorld;
-import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 
-/**
- * Stage 2 movement controller.
- *
- * Responsibilities:
- * - Execute a sequence of navigation nodes one at a time.
- * - Keep Stage 1 straight-line movement working for a single target.
- * - React locally when the immediate path is blocked by a wall, hazard, or hole.
- * - Prefer all world-sensing rules from {@link BlockAnalyzer} and {@link EnvironmentScan}.
- */
 public class MovementController {
-    private static final double NODE_REACHED_DISTANCE = 0.75D;
-    private static final double WALK_SPEED = 0.215D;
-    private static final double SLOWDOWN_DISTANCE = 2.0D;
-    private static final double JUMP_VELOCITY = 0.42D;
+    private static final double VELOCITY_SMOOTHING_FACTOR = 0.20D;
+    private static final double DIRECTION_CHANGE_THRESHOLD = 0.4D;
+    private static final int MAX_TICKS_AT_NODE = 60; // 3 seconds
 
     private final Deque<NavigationNode> remainingNodes = new ArrayDeque<>();
+    private NavigationNode previousNode;
     private NavigationNode currentNode;
+    private IMovement currentMovement;
+
     private boolean active;
     private boolean appliedMovement;
+    private Vec3d smoothedVelocity = Vec3d.ZERO;
+    private BlockPos originalGoal;
+    private int recalculationAttempts = 0;
+    private static final int MAX_RECALCULATION_ATTEMPTS = 3;
+    private Vec3d lastRecalculationPos = null;
+    private static final double RECALCULATION_DISTANCE = 30.0D;
+    
+    private int ticksAtCurrentNode = 0;
+    private boolean enableVelocitySmoothing = true; // Disabled as per user request
 
     public void setTarget(double x, double y, double z) {
         setPath(List.of(new NavigationNode(BlockPos.ofFloored(x, y, z))));
     }
 
     public void setPath(List<NavigationNode> nodes) {
-        clearPathState(true);
-
-        if (nodes == null || nodes.isEmpty()) {
-            active = false;
-            return;
-        }
-
-        for (NavigationNode node : nodes) {
-            if (node != null) {
-                remainingNodes.addLast(copyNode(node));
-            }
-        }
-
+        clearPathState();
+        if (nodes == null || nodes.isEmpty()) { active = false; return; }
+        for (NavigationNode node : nodes) { if (node != null) { remainingNodes.addLast(copyNode(node)); } }
         active = !remainingNodes.isEmpty();
-        advanceToNextNode();
+        advanceToNextNode(MinecraftClient.getInstance().player);
     }
 
     public void setPath(NavigationNode... nodes) {
-        clearPathState(true);
-
-        if (nodes == null || nodes.length == 0) {
-            active = false;
-            return;
-        }
-
-        for (NavigationNode node : nodes) {
-            if (node != null) {
-                remainingNodes.addLast(copyNode(node));
-            }
-        }
-
+        clearPathState();
+        if (nodes == null || nodes.length == 0) { active = false; return; }
+        for (NavigationNode node : nodes) { if (node != null) { remainingNodes.addLast(copyNode(node)); } }
         active = !remainingNodes.isEmpty();
-        advanceToNextNode();
+        advanceToNextNode(MinecraftClient.getInstance().player);
+    }
+
+    public void setPlannedRoute(List<NavigationNode> route) {
+        setPath(route);
+        if (route != null && !route.isEmpty()) {
+            originalGoal = route.getLast().position();
+            ClientPlayerEntity player = MinecraftClient.getInstance().player;
+            if (player != null) {
+                lastRecalculationPos = new Vec3d(player.getX(), player.getY(), player.getZ());
+            }
+            recalculationAttempts = 0;
+        }
     }
 
     public void clearTarget() {
         active = false;
-        clearPathState(true);
+        originalGoal = null;
+        recalculationAttempts = 0;
+        lastRecalculationPos = null;
+        clearPathState();
     }
 
-    public boolean isActive() {
-        return active;
-    }
+    public boolean isActive() { return active; }
 
     public Vec3d getTarget() {
         return active && currentNode != null ? nodeCenter(currentNode.position()) : null;
@@ -89,202 +86,139 @@ public class MovementController {
 
     public List<NavigationNode> getActivePathSnapshot() {
         List<NavigationNode> snapshot = new ArrayList<>();
-        if (currentNode != null) {
-            snapshot.add(copyNode(currentNode));
-        }
-        for (NavigationNode node : remainingNodes) {
-            snapshot.add(copyNode(node));
-        }
+        if (currentNode != null) { snapshot.add(copyNode(currentNode)); }
+        for (NavigationNode node : remainingNodes) { snapshot.add(copyNode(node)); }
         return snapshot;
     }
 
     public void tick() {
-        if (!active) {
-            return;
-        }
-
+        if (!active) return;
         MinecraftClient client = MinecraftClient.getInstance();
         ClientPlayerEntity player = client.player;
-        if (player == null) {
-            return;
-        }
+        if (player == null) return;
 
-        if (currentNode == null) {
-            advanceToNextNode();
-            if (!active) {
+        if (originalGoal != null && lastRecalculationPos != null) {
+            Vec3d currentPos = new Vec3d(player.getX(), player.getY(), player.getZ());
+            double distTraveled = currentPos.distanceTo(lastRecalculationPos);
+            if (distTraveled >= RECALCULATION_DISTANCE && recalculationAttempts < MAX_RECALCULATION_ATTEMPTS) {
+                recalculateRoute(client.world, player.getBlockPos(), originalGoal);
                 return;
             }
         }
 
-        Vec3d target = nodeCenter(currentNode.position());
-        double px = player.getX();
-        double py = player.getY();
-        double pz = player.getZ();
-        double dx = target.x - px;
-        double dy = target.y - py;
-        double dz = target.z - pz;
-        double distanceSq = dx * dx + dy * dy + dz * dz;
-
-        if (distanceSq <= NODE_REACHED_DISTANCE * NODE_REACHED_DISTANCE) {
-            advanceToNextNode();
-            if (!active) {
-                finishNavigation(client, player);
-            }
+        if (currentNode == null) {
+            advanceToNextNode(player);
+            if (!active) return;
+        }
+        
+        ticksAtCurrentNode++;
+        if (ticksAtCurrentNode > MAX_TICKS_AT_NODE) {
+            recalculateRoute(client.world, player.getBlockPos(), originalGoal);
             return;
         }
 
-        movePlayerTowardCurrentNode(player, client.world, dx, dy, dz, Math.sqrt(distanceSq));
+        if (currentMovement == null) {
+            NavigationNode prev = previousNode != null ? previousNode : new NavigationNode(player.getBlockPos());
+            currentMovement = MovementHelper.createMovement(prev, currentNode);
+            if (currentMovement == null) {
+                advanceToNextNode(player);
+                if (!active) finishNavigation(client, player);
+                return;
+            }
+        }
+
+        MovementState state = currentMovement.tick(client, player, client.world);
+
+        if (state.getStatus() == MovementStatus.SUCCESS) {
+            advanceToNextNode(player);
+            if (!active) finishNavigation(client, player);
+            return;
+        } else if (state.getStatus() == MovementStatus.UNREACHABLE) {
+            recalculateRoute(client.world, player.getBlockPos(), originalGoal);
+            return;
+        }
+
+        applyMovementState(player, state);
+    }
+    
+    private void recalculateRoute(ClientWorld world, BlockPos start, BlockPos goal) {
+        if (world != null && recalculationAttempts < MAX_RECALCULATION_ATTEMPTS) {
+            List<NavigationNode> newRoute = LocalRoutePlanner.findRoute(world, start, goal);
+            if (!newRoute.isEmpty()) {
+                recalculationAttempts++;
+                setPlannedRoute(newRoute);
+            } else {
+                finishNavigation(MinecraftClient.getInstance(), MinecraftClient.getInstance().player);
+            }
+        } else {
+            finishNavigation(MinecraftClient.getInstance(), MinecraftClient.getInstance().player);
+        }
     }
 
-    private void movePlayerTowardCurrentNode(ClientPlayerEntity player, ClientWorld world, double dx, double dy, double dz, double distance) {
-        if (world == null) {
-            stopControlledMovement(player);
-            return;
-        }
+    private void applyMovementState(ClientPlayerEntity player, MovementState state) {
+        player.setSneaking(state.isSneak());
+        player.setSprinting(state.isSprint());
 
-        double horizontalDistance = Math.sqrt(dx * dx + dz * dz);
-        if (horizontalDistance <= 0.0001D) {
-            stopControlledMovement(player);
-            return;
-        }
-
-        EnvironmentScan scan = EnvironmentScan.scan(world, player.getX(), player.getY(), player.getZ(), dx, dz, dy);
-        LocalMovementChoice choice = chooseMovementChoice(scan, dx, dy, dz);
-        if (choice.isBlocked()) {
-            stopControlledMovement(player);
-            return;
-        }
-
-        Vec3d velocity = player.getVelocity();
-        double speed = WALK_SPEED * choice.speedMultiplier * Math.min(1.0D, distance / SLOWDOWN_DISTANCE);
-        double velocityX = choice.direction.x * speed;
-        double velocityZ = choice.direction.z * speed;
-        double velocityY = velocity.y;
-
-        if (choice.jumpNeeded && player.isOnGround()) {
+        if (state.isJump() && player.isOnGround()) {
             player.jump();
-            velocityY = Math.max(velocityY, JUMP_VELOCITY);
         }
 
-        player.setVelocity(velocityX, velocityY, velocityZ);
+        Vec3d targetVel = state.getTargetVelocity();
+        double targetVelocityX = targetVel.x;
+        double targetVelocityY = targetVel.y;
+        double targetVelocityZ = targetVel.z;
+        
+        if (!enableVelocitySmoothing) {
+            smoothedVelocity = new Vec3d(targetVelocityX, targetVelocityY, targetVelocityZ);
+        } else {
+            double adaptiveSmoothingFactor = VELOCITY_SMOOTHING_FACTOR;
+            if (!player.isOnGround()) {
+                adaptiveSmoothingFactor = 0.12D;
+            } else {
+                Vec3d targetDir = new Vec3d(targetVelocityX, 0.0D, targetVelocityZ);
+                Vec3d prevDir = new Vec3d(smoothedVelocity.x, 0.0D, smoothedVelocity.z);
+                double targetMag = targetDir.length();
+                double prevMag = prevDir.length();
+                if (targetMag > 0.0001D && prevMag > 0.0001D) {
+                    double dot = (targetDir.x * prevDir.x + targetDir.z * prevDir.z) / (targetMag * prevMag);
+                    if (dot < DIRECTION_CHANGE_THRESHOLD) adaptiveSmoothingFactor = 0.12D;
+                }
+            }
+    
+            if (state.isSneak()) adaptiveSmoothingFactor = Math.min(adaptiveSmoothingFactor, 0.15D);
+    
+            double smoothedVelX = smoothedVelocity.x * (1.0D - adaptiveSmoothingFactor) + targetVelocityX * adaptiveSmoothingFactor;
+            double smoothedVelZ = smoothedVelocity.z * (1.0D - adaptiveSmoothingFactor) + targetVelocityZ * adaptiveSmoothingFactor;
+            smoothedVelocity = new Vec3d(smoothedVelX, targetVelocityY, smoothedVelZ);
+        }
+
+        player.setVelocity(smoothedVelocity);
         appliedMovement = true;
     }
 
-    private LocalMovementChoice chooseMovementChoice(EnvironmentScan scan, double dx, double dy, double dz) {
-        double horizontalDistance = Math.sqrt(dx * dx + dz * dz);
-        double forwardX = dx / horizontalDistance;
-        double forwardZ = dz / horizontalDistance;
-
-        if (scan.forwardStandable()) {
-            return LocalMovementChoice.forward(forwardX, forwardZ, 1.0D);
+    private void advanceToNextNode(ClientPlayerEntity player) { 
+        previousNode = currentNode;
+        if (previousNode == null && player != null) {
+            previousNode = new NavigationNode(player.getBlockPos());
         }
-
-        if (scan.forwardStepUpStandable()) {
-            return LocalMovementChoice.stepUp(forwardX, forwardZ);
-        }
-
-        if (scan.forwardStepDownStandable()) {
-            return LocalMovementChoice.stepDown(forwardX, forwardZ);
-        }
-
-        if (scan.leftStandable()) {
-            return LocalMovementChoice.strafe(-forwardZ, forwardX, 0.95D);
-        }
-
-        if (scan.rightStandable()) {
-            return LocalMovementChoice.strafe(forwardZ, -forwardX, 0.95D);
-        }
-
-        return LocalMovementChoice.blocked();
-    }
-
-    private void advanceToNextNode() {
-        currentNode = remainingNodes.pollFirst();
-        if (currentNode == null) {
-            active = false;
-        }
+        currentNode = remainingNodes.pollFirst(); 
+        currentMovement = null;
+        ticksAtCurrentNode = 0;
+        if (currentNode == null) active = false; 
     }
 
     private void finishNavigation(MinecraftClient client, ClientPlayerEntity player) {
-        active = false;
-        currentNode = null;
-        remainingNodes.clear();
-        stopControlledMovement(player);
-
-        if (client.inGameHud != null) {
-            client.inGameHud.getChatHud().addMessage(Text.literal("Arrived at target."));
-        }
-    }
-
-    private void clearPathState(boolean stopMovement) {
-        remainingNodes.clear();
-        currentNode = null;
-
-        if (stopMovement) {
-            stopControlledMovement();
-        }
-    }
-
-    private void stopControlledMovement() {
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client.player != null) {
-            stopControlledMovement(client.player);
-        }
-    }
-
-    private void stopControlledMovement(ClientPlayerEntity player) {
-        if (!appliedMovement) {
+        if (originalGoal != null && recalculationAttempts < MAX_RECALCULATION_ATTEMPTS) {
+            recalculateRoute(client.world, player.getBlockPos(), originalGoal);
             return;
         }
-
-        Vec3d velocity = player.getVelocity();
-        player.setVelocity(0.0D, velocity.y, 0.0D);
-        appliedMovement = false;
+        active = false; currentNode = null; previousNode = null; currentMovement = null; remainingNodes.clear(); originalGoal = null; recalculationAttempts = 0; stopControlledMovement(player);
     }
 
-    private static NavigationNode copyNode(NavigationNode node) {
-        return new NavigationNode(node.position(), node.movementCost(), node.estimatedCost(), node.parent());
-    }
-
-    private static Vec3d nodeCenter(BlockPos pos) {
-        return new Vec3d(pos.getX() + 0.5D, pos.getY(), pos.getZ() + 0.5D);
-    }
-
-    private static final class LocalMovementChoice {
-        private final Vec3d direction;
-        private final double speedMultiplier;
-        private final boolean jumpNeeded;
-        private final boolean isBlocked;
-
-        private LocalMovementChoice(Vec3d direction, double speedMultiplier, boolean jumpNeeded, boolean isBlocked) {
-            this.direction = direction;
-            this.speedMultiplier = speedMultiplier;
-            this.jumpNeeded = jumpNeeded;
-            this.isBlocked = isBlocked;
-        }
-
-        private static LocalMovementChoice forward(double x, double z, double speedMultiplier) {
-            return new LocalMovementChoice(new Vec3d(x, 0.0D, z), speedMultiplier, false, false);
-        }
-
-        private static LocalMovementChoice strafe(double x, double z, double speedMultiplier) {
-            return new LocalMovementChoice(new Vec3d(x, 0.0D, z), speedMultiplier, false, false);
-        }
-
-        private static LocalMovementChoice stepUp(double x, double z) {
-            return new LocalMovementChoice(new Vec3d(x, 0.0D, z), 0.90D, true, false);
-        }
-
-        private static LocalMovementChoice stepDown(double x, double z) {
-            return new LocalMovementChoice(new Vec3d(x, 0.0D, z), 1.0D, false, false);
-        }
-
-        private static LocalMovementChoice blocked() {
-            return new LocalMovementChoice(Vec3d.ZERO, 0.0D, false, true);
-        }
-
-        private boolean isBlocked() {
-            return isBlocked;
-        }
-    }
+    private void clearPathState() { remainingNodes.clear(); currentNode = null; previousNode = null; currentMovement = null; smoothedVelocity = Vec3d.ZERO; originalGoal = null; recalculationAttempts = 0; lastRecalculationPos = null; stopControlledMovement(); }
+    private void stopControlledMovement() { if (MinecraftClient.getInstance().player != null) stopControlledMovement(MinecraftClient.getInstance().player); }
+    private void stopControlledMovement(ClientPlayerEntity player) { if (!appliedMovement) return; player.setVelocity(0.0D, player.getVelocity().y, 0.0D); smoothedVelocity = Vec3d.ZERO; appliedMovement = false; }
+    private static NavigationNode copyNode(NavigationNode node) { return new NavigationNode(node.position(), node.movementCost(), node.estimatedCost(), node.parent()); }
+    private static Vec3d nodeCenter(BlockPos pos) { return new Vec3d(pos.getX() + 0.5D, pos.getY(), pos.getZ() + 0.5D); }
 }
+

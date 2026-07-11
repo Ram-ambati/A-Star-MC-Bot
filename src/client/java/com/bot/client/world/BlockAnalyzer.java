@@ -124,10 +124,31 @@ public final class BlockAnalyzer {
             return false;
         }
 
-        if (dy < -1 || dy > 1) {
+        // Allow stepping up 1 block or stepping down up to 3 blocks
+        if (dy < -3 || dy > 1) {
             return false;
         }
 
+        // For descents, validate that all intermediate levels have safe ground
+        if (dy < 0) {
+            return canDescendTo(world, from, to, dy);
+        }
+
+        return canStandAt(world, to);
+    }
+
+    private static boolean canDescendTo(ClientWorld world, BlockPos from, BlockPos to, int dySteps) {
+        // dy is negative, so we're descending |dy| blocks
+        // Validate that each step down has ground and no hazards
+        BlockPos current = from;
+        for (int i = 0; i < Math.abs(dySteps); i++) {
+            BlockPos nextStep = current.down();
+            if (!hasGroundBelow(world, nextStep) || isHazard(world, nextStep.down())) {
+                return false;
+            }
+            current = nextStep;
+        }
+        // Final destination must be standable
         return canStandAt(world, to);
     }
 
@@ -141,8 +162,15 @@ public final class BlockAnalyzer {
 
         if (dy == 1) {
             cost += STEP_UP_COST;
-        } else if (dy == -1) {
+        } else if (dy < 0) {
+            // Multi-block descent: cost scales with descent distance
+            // 1-block descent: STEP_DOWN_COST
+            // 2-block descent: STEP_DOWN_COST + (FLAT_MOVE_COST * 0.5) bonus
+            // 3-block descent: STEP_DOWN_COST + (FLAT_MOVE_COST * 1.0) bonus
             cost += STEP_DOWN_COST;
+            if (dy < -1) {
+                cost += FLAT_MOVE_COST * 0.5D * (-dy - 1);
+            }
         }
 
         if (isWater(world, to)) {

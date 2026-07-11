@@ -9,14 +9,12 @@ import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.RenderLayers;
 import net.minecraft.client.render.VertexConsumer;
-import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import org.slf4j.Logger;
 
 /**
  * Renders a navigation overlay for the active movement path.
- *
- * Stage 2 visualization:
+ * Stage 3 visualization:
  * - cyan line segments between block-centered navigation nodes
  * - yellow marker box at the current destination node
  * - optional path preview updates in real time as the active node sequence changes
@@ -68,30 +66,11 @@ public class TrajectoryRenderer {
         VertexConsumer consumer = context.consumers().getBuffer(RenderLayers.lines());
         Vec3d cameraPos = context.worldState().cameraRenderState.pos;
 
-        Vec3d playerCenter = blockCenter(BlockPos.ofFloored(client.player.getX(), client.player.getY(), client.player.getZ()));
-        Vec3d previous = toRelative(playerCenter, cameraPos);
-
-        // If there is only one node, render a simple block-centered guide to it.
-        if (path.size() == 1) {
-            Vec3d targetCenter = toRelative(path.getFirst().center(), cameraPos);
-            drawLine(consumer, (float) previous.x, (float) previous.y, (float) previous.z,
-                    (float) targetCenter.x, (float) targetCenter.y, (float) targetCenter.z,
-                    PATH_COLOR, PATH_LINE_WIDTH);
-            drawNodeMarker(consumer, targetCenter, TARGET_COLOR, MARKER_LINE_WIDTH);
-            return;
-        }
-
-        // Multi-node path: draw block-to-block segments.
         for (int i = 0; i < path.size(); i++) {
             NavigationNode node = path.get(i);
             Vec3d nodeCenter = toRelative(node.center(), cameraPos);
 
-            if (i == 0) {
-                drawLine(consumer,
-                        (float) previous.x, (float) previous.y, (float) previous.z,
-                        (float) nodeCenter.x, (float) nodeCenter.y, (float) nodeCenter.z,
-                        PATH_COLOR, PATH_LINE_WIDTH);
-            } else {
+            if (i > 0) {
                 Vec3d prevNodeCenter = toRelative(path.get(i - 1).center(), cameraPos);
                 drawLine(consumer,
                         (float) prevNodeCenter.x, (float) prevNodeCenter.y, (float) prevNodeCenter.z,
@@ -99,17 +78,16 @@ public class TrajectoryRenderer {
                         PATH_COLOR, PATH_LINE_WIDTH);
             }
 
-            drawNodeMarker(consumer, nodeCenter, i == path.size() - 1 ? TARGET_COLOR : NODE_COLOR,
-                    i == path.size() - 1 ? MARKER_LINE_WIDTH : NODE_MARKER_LINE_WIDTH);
+            // Only draw a marker for the final destination node. Remove intermediate
+            // cyan node cubes so the path is a clean line between nodes.
+            if (i == path.size() - 1) {
+                drawNodeMarker(consumer, nodeCenter, TARGET_COLOR, MARKER_LINE_WIDTH);
+            }
         }
     }
 
     private static Vec3d toRelative(Vec3d worldPos, Vec3d cameraPos) {
         return worldPos.subtract(cameraPos);
-    }
-
-    private static Vec3d blockCenter(BlockPos pos) {
-        return new Vec3d(pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D);
     }
 
     private static void drawNodeMarker(VertexConsumer consumer, Vec3d center, int color, float lineWidth) {

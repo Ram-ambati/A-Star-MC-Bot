@@ -22,6 +22,10 @@ public final class NeighborGenerator {
             Direction.EAST
     };
 
+    private static final int[][] DIAGONAL_OFFSETS = {
+        {1, 1}, {1, -1}, {-1, 1}, {-1, -1}
+    };
+
     private NeighborGenerator() {
     }
 
@@ -31,9 +35,19 @@ public final class NeighborGenerator {
 
     public static List<NavigationNode> getLocalNeighbors(ClientWorld world, NavigationNode node, BlockPos target) {
         List<NavigationNode> neighbors = new ArrayList<>();
+        BlockPos originPos = node.position();
 
+        // Cardinal directions
         for (Direction direction : CARDINAL_DIRECTIONS) {
-            BlockPos base = node.position().offset(direction);
+            BlockPos base = originPos.offset(direction);
+            addIfReachable(world, node, target, neighbors, base);
+            addIfReachable(world, node, target, neighbors, base.up());
+            addIfReachable(world, node, target, neighbors, base.down());
+        }
+
+        // Diagonal directions
+        for (int[] offset : DIAGONAL_OFFSETS) {
+            BlockPos base = originPos.add(offset[0], 0, offset[1]);
             addIfReachable(world, node, target, neighbors, base);
             addIfReachable(world, node, target, neighbors, base.up());
             addIfReachable(world, node, target, neighbors, base.down());
