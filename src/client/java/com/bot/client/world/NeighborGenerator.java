@@ -45,13 +45,7 @@ public final class NeighborGenerator {
             addIfReachable(world, node, target, neighbors, base.down());
         }
 
-        // Diagonal directions
-        for (int[] offset : DIAGONAL_OFFSETS) {
-            BlockPos base = originPos.add(offset[0], 0, offset[1]);
-            addIfReachable(world, node, target, neighbors, base);
-            addIfReachable(world, node, target, neighbors, base.up());
-            addIfReachable(world, node, target, neighbors, base.down());
-        }
+
 
         return neighbors;
     }

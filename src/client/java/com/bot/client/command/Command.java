@@ -50,7 +50,7 @@ public class Command {
 
                                              movementController.setPlannedRoute(route);
                                              BlockPos lastNode = route.get(route.size() - 1).position();
-                                             boolean isFullPath = lastNode.getX() == (int)x && lastNode.getY() == (int)y && lastNode.getZ() == (int)z;
+                                             boolean isFullPath = lastNode.equals(goal);
                                              String pathType = isFullPath ? "complete" : "partial";
                                              if (client.inGameHud != null) {
                                                  client.inGameHud.getChatHud().addMessage(Text.literal("Navigating to " + x + " " + y + " " + z + " (" + pathType + " path, " + route.size() + " nodes)"));

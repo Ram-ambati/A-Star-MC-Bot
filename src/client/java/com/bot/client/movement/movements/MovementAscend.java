@@ -21,7 +21,7 @@ public class MovementAscend extends MovementBase {
         double dz = target.z - player.getZ();
         double horizontalDist = getHorizontalDistance(player, target);
 
-        if (horizontalDist <= 0.75D && Math.abs(dy) <= 0.75D) {
+        if (horizontalDist <= 0.35D && Math.abs(dy) <= 0.35D) {
             return state.setStatus(MovementStatus.SUCCESS);
         }
 

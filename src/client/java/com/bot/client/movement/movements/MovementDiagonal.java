@@ -23,7 +23,7 @@ public class MovementDiagonal extends MovementBase {
         double dz = target.z - player.getZ();
         double horizontalDist = getHorizontalDistance(player, target);
 
-        if (horizontalDist <= 0.75D && Math.abs(dy) <= 0.75D) {
+        if (horizontalDist <= 0.35D && Math.abs(dy) <= 0.35D) {
             return state.setStatus(MovementStatus.SUCCESS);
         }
 
@@ -36,9 +36,7 @@ public class MovementDiagonal extends MovementBase {
         boolean sprint = shouldSprint(player);
         double speed = WALK_SPEED * (sprint ? SPRINT_SPEED_MULTIPLIER : 1.0D);
 
-        if (horizontalDist < 1.5D) {
-            speed *= Math.max(0.4D, horizontalDist / 1.5D);
-        }
+
 
         double velX = horizontalDist > 0.0001D ? (dx / horizontalDist) * speed : 0;
         double velZ = horizontalDist > 0.0001D ? (dz / horizontalDist) * speed : 0;

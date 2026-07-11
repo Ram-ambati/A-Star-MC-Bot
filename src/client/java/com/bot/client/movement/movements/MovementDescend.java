@@ -21,17 +21,15 @@ public class MovementDescend extends MovementBase {
         double dz = target.z - player.getZ();
         double horizontalDist = getHorizontalDistance(player, target);
 
-        if (horizontalDist <= 0.75D && dy >= -0.25D && dy <= 0.75D) {
+        if (horizontalDist <= 0.35D && dy >= -0.25D && dy <= 0.35D) {
             return state.setStatus(MovementStatus.SUCCESS);
         }
 
         double speed = WALK_SPEED * DESCEND_SPEED_MULTIPLIER;
         boolean sneak = false;
         
-        if (player.isOnGround() && horizontalDist > 0.35D && horizontalDist < 0.85D) {
-            sneak = true;
-            speed *= 0.60D;
-        }
+        // Removed sneak and slowdown logic here to prevent getting stuck at block edges
+
 
         double velX = horizontalDist > 0.0001D ? (dx / horizontalDist) * speed : 0;
         double velZ = horizontalDist > 0.0001D ? (dz / horizontalDist) * speed : 0;

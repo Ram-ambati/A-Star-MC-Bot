@@ -21,6 +21,10 @@ public class MovementController {
     private static final double DIRECTION_CHANGE_THRESHOLD = 0.4D;
     private static final int MAX_TICKS_AT_NODE = 60; // 3 seconds
 
+    public static boolean isSpoofing = false;
+    public static float spoofedYaw = 0.0f;
+    public static float spoofedPitch = 0.0f;
+
     private final Deque<NavigationNode> remainingNodes = new ArrayDeque<>();
     private NavigationNode previousNode;
     private NavigationNode currentNode;
@@ -36,7 +40,7 @@ public class MovementController {
     private static final double RECALCULATION_DISTANCE = 30.0D;
     
     private int ticksAtCurrentNode = 0;
-    private boolean enableVelocitySmoothing = true; // Disabled as per user request
+    private boolean enableVelocitySmoothing = false; // Disabled as per user request
 
     public void setTarget(double x, double y, double z) {
         setPath(List.of(new NavigationNode(BlockPos.ofFloored(x, y, z))));
@@ -106,39 +110,52 @@ public class MovementController {
             }
         }
 
-        if (currentNode == null) {
-            advanceToNextNode(player);
-            if (!active) return;
-        }
-        
-        ticksAtCurrentNode++;
-        if (ticksAtCurrentNode > MAX_TICKS_AT_NODE) {
-            recalculateRoute(client.world, player.getBlockPos(), originalGoal);
-            return;
-        }
-
-        if (currentMovement == null) {
-            NavigationNode prev = previousNode != null ? previousNode : new NavigationNode(player.getBlockPos());
-            currentMovement = MovementHelper.createMovement(prev, currentNode);
-            if (currentMovement == null) {
+        while (active) {
+            if (currentNode == null) {
                 advanceToNextNode(player);
-                if (!active) finishNavigation(client, player);
+                if (!active) {
+                    player.sendMessage(net.minecraft.text.Text.literal("§aReached destination!"), false);
+                    return;
+                }
+            }
+            
+            ticksAtCurrentNode++;
+            if (ticksAtCurrentNode > MAX_TICKS_AT_NODE) {
+                recalculateRoute(client.world, player.getBlockPos(), originalGoal);
                 return;
             }
+
+            if (currentMovement == null) {
+                NavigationNode prev = previousNode != null ? previousNode : new NavigationNode(player.getBlockPos());
+                currentMovement = MovementHelper.createMovement(prev, currentNode);
+                if (currentMovement == null) {
+                    advanceToNextNode(player);
+                    if (!active) {
+                        finishNavigation(client, player);
+                        player.sendMessage(net.minecraft.text.Text.literal("§aReached destination!"), false);
+                    }
+                    continue;
+                }
+            }
+
+            MovementState state = currentMovement.tick(client, player, client.world);
+
+            if (state.getStatus() == MovementStatus.SUCCESS) {
+                advanceToNextNode(player);
+                if (!active) {
+                    finishNavigation(client, player);
+                    player.sendMessage(net.minecraft.text.Text.literal("§aReached destination!"), false);
+                    return;
+                }
+                continue; // Process next node immediately in the same tick
+            } else if (state.getStatus() == MovementStatus.UNREACHABLE) {
+                recalculateRoute(client.world, player.getBlockPos(), originalGoal);
+                return;
+            }
+
+            applyMovementState(player, state);
+            break;
         }
-
-        MovementState state = currentMovement.tick(client, player, client.world);
-
-        if (state.getStatus() == MovementStatus.SUCCESS) {
-            advanceToNextNode(player);
-            if (!active) finishNavigation(client, player);
-            return;
-        } else if (state.getStatus() == MovementStatus.UNREACHABLE) {
-            recalculateRoute(client.world, player.getBlockPos(), originalGoal);
-            return;
-        }
-
-        applyMovementState(player, state);
     }
     
     private void recalculateRoute(ClientWorld world, BlockPos start, BlockPos goal) {
@@ -158,6 +175,8 @@ public class MovementController {
     private void applyMovementState(ClientPlayerEntity player, MovementState state) {
         player.setSneaking(state.isSneak());
         player.setSprinting(state.isSprint());
+        
+
 
         if (state.isJump() && player.isOnGround()) {
             player.jump();
@@ -193,6 +212,14 @@ public class MovementController {
         }
 
         player.setVelocity(smoothedVelocity);
+        
+        if (Math.abs(smoothedVelocity.x) > 0.001D || Math.abs(smoothedVelocity.z) > 0.001D) {
+            spoofedYaw = (float) Math.toDegrees(Math.atan2(-smoothedVelocity.x, smoothedVelocity.z));
+            isSpoofing = true;
+        } else {
+            isSpoofing = false;
+        }
+        
         appliedMovement = true;
     }
 
@@ -208,14 +235,11 @@ public class MovementController {
     }
 
     private void finishNavigation(MinecraftClient client, ClientPlayerEntity player) {
-        if (originalGoal != null && recalculationAttempts < MAX_RECALCULATION_ATTEMPTS) {
-            recalculateRoute(client.world, player.getBlockPos(), originalGoal);
-            return;
-        }
         active = false; currentNode = null; previousNode = null; currentMovement = null; remainingNodes.clear(); originalGoal = null; recalculationAttempts = 0; stopControlledMovement(player);
+        isSpoofing = false;
     }
 
-    private void clearPathState() { remainingNodes.clear(); currentNode = null; previousNode = null; currentMovement = null; smoothedVelocity = Vec3d.ZERO; originalGoal = null; recalculationAttempts = 0; lastRecalculationPos = null; stopControlledMovement(); }
+    private void clearPathState() { remainingNodes.clear(); currentNode = null; previousNode = null; currentMovement = null; smoothedVelocity = Vec3d.ZERO; originalGoal = null; recalculationAttempts = 0; lastRecalculationPos = null; stopControlledMovement(); isSpoofing = false; }
     private void stopControlledMovement() { if (MinecraftClient.getInstance().player != null) stopControlledMovement(MinecraftClient.getInstance().player); }
     private void stopControlledMovement(ClientPlayerEntity player) { if (!appliedMovement) return; player.setVelocity(0.0D, player.getVelocity().y, 0.0D); smoothedVelocity = Vec3d.ZERO; appliedMovement = false; }
     private static NavigationNode copyNode(NavigationNode node) { return new NavigationNode(node.position(), node.movementCost(), node.estimatedCost(), node.parent()); }
