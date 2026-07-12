@@ -4,11 +4,7 @@ import com.bot.client.world.BlockAnalyzer;
 import com.bot.client.world.NavigationNode;
 import com.bot.client.world.NeighborGenerator;
 import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.PriorityQueue;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.math.BlockPos;
@@ -36,65 +32,82 @@ public final class LocalRoutePlanner {
         return findRoute(world, start, goal, DEFAULT_HEURISTIC_WEIGHT);
     }
 
-    public static List<NavigationNode> findRoute(ClientWorld world, BlockPos start, BlockPos goal, double heuristicWeight) {
+    public static PathfinderState beginRoute(ClientWorld world, BlockPos start, BlockPos goal, double heuristicWeight) {
         if (world == null || start == null || goal == null) {
-            return List.of();
+            return null;
         }
 
+        PathfinderState state = new PathfinderState(start, goal, heuristicWeight);
         NavigationNode startNode = new NavigationNode(start, 0.0D, weightedHeuristic(start, goal, heuristicWeight), null);
-        PriorityQueue<NavigationNode> openSet = new PriorityQueue<>(Comparator
-                .comparingDouble(NavigationNode::totalCost)
-                .thenComparingDouble(NavigationNode::estimatedCost));
-        Map<BlockPos, Double> bestCosts = new HashMap<>();
-        Map<BlockPos, NavigationNode> bestNodes = new HashMap<>();
+        state.openSet.add(startNode);
+        state.bestCosts.put(startNode.position(), 0.0D);
+        state.bestNodes.put(startNode.position(), startNode);
+        
+        state.bestNodeFound = startNode;
+        state.bestDistanceToGoal = heuristic(start, goal);
+        
+        return state;
+    }
+    
+    public static void tick(ClientWorld world, PathfinderState state, int maxExpansions) {
+        if (state == null || state.status != PathfinderState.Status.RUNNING) {
+            return;
+        }
 
-        openSet.add(startNode);
-        bestCosts.put(startNode.position(), 0.0D);
-        bestNodes.put(startNode.position(), startNode);
-
-        // Track the best node found during search for partial path fallback
-        NavigationNode bestNodeFound = startNode;
-        double bestDistanceToGoal = heuristic(start, goal);
-
-        int expansions = 0;
-        while (!openSet.isEmpty() && expansions++ < MAX_EXPANSIONS) {
-            NavigationNode current = openSet.poll();
-            Double knownBest = bestCosts.get(current.position());
+        int expansionsThisTick = 0;
+        while (!state.openSet.isEmpty() && expansionsThisTick++ < maxExpansions && state.expansions++ < MAX_EXPANSIONS) {
+            NavigationNode current = state.openSet.poll();
+            Double knownBest = state.bestCosts.get(current.position());
             if (knownBest != null && current.movementCost() > knownBest) {
                 continue;
             }
 
-            if (isGoal(current.position(), goal)) {
-                return reconstructPath(current);
+            if (isGoal(current.position(), state.goal)) {
+                state.finalRoute = reconstructPath(current);
+                state.status = PathfinderState.Status.SUCCESS;
+                return;
             }
 
             // Track best partial path (closest node to goal found so far)
-            double distToGoal = heuristic(current.position(), goal);
-            if (distToGoal < bestDistanceToGoal) {
-                bestDistanceToGoal = distToGoal;
-                bestNodeFound = current;
+            double distToGoal = heuristic(current.position(), state.goal);
+            if (distToGoal < state.bestDistanceToGoal) {
+                state.bestDistanceToGoal = distToGoal;
+                state.bestNodeFound = current;
             }
 
-            for (NavigationNode neighbor : NeighborGenerator.getLocalNeighbors(world, current, goal)) {
+            for (NavigationNode neighbor : NeighborGenerator.getLocalNeighbors(world, current, state.goal)) {
                 double tentativeCost = neighbor.movementCost();
-                Double bestCost = bestCosts.get(neighbor.position());
+                Double bestCost = state.bestCosts.get(neighbor.position());
                 if (bestCost != null && tentativeCost >= bestCost) {
                     continue;
                 }
 
-                neighbor.setEstimatedCost(weightedHeuristic(neighbor.position(), goal, heuristicWeight));
-                bestCosts.put(neighbor.position(), tentativeCost);
-                bestNodes.put(neighbor.position(), neighbor);
-                openSet.add(neighbor);
+                neighbor.setEstimatedCost(weightedHeuristic(neighbor.position(), state.goal, state.heuristicWeight));
+                state.bestCosts.put(neighbor.position(), tentativeCost);
+                state.bestNodes.put(neighbor.position(), neighbor);
+                state.openSet.add(neighbor);
             }
         }
 
-        // If we didn't find the goal, return the partial path to the best node we found
-        if (bestNodeFound != startNode) {
-            return reconstructPath(bestNodeFound);
+        if (state.status == PathfinderState.Status.RUNNING) {
+            if (state.openSet.isEmpty() || state.expansions >= MAX_EXPANSIONS) {
+                // Search finished without finding goal
+                if (state.bestNodeFound != null && !state.bestNodeFound.position().equals(state.start)) {
+                    state.finalRoute = reconstructPath(state.bestNodeFound);
+                    state.status = PathfinderState.Status.SUCCESS; // Partial path is considered success here
+                } else {
+                    state.finalRoute = List.of();
+                    state.status = PathfinderState.Status.FAILED;
+                }
+            }
         }
-
-        return List.of();
+    }
+    
+    public static List<NavigationNode> findRoute(ClientWorld world, BlockPos start, BlockPos goal, double heuristicWeight) {
+        PathfinderState state = beginRoute(world, start, goal, heuristicWeight);
+        if (state == null) return List.of();
+        tick(world, state, MAX_EXPANSIONS);
+        return state.finalRoute != null ? state.finalRoute : List.of();
     }
 
     public static boolean isRouteStandable(ClientWorld world, List<NavigationNode> route) {
@@ -125,9 +138,9 @@ public final class LocalRoutePlanner {
         return new NavigationNode(node.position(), node.movementCost(), node.estimatedCost(), node.parent());
     }
 
-    private static boolean isGoal(BlockPos position, BlockPos goal) {
+    public static boolean isGoal(BlockPos position, BlockPos goal) {
         return position.getX() == goal.getX()
-                && position.getY() == goal.getY()
+                && Math.abs(position.getY() - goal.getY()) <= 2
                 && position.getZ() == goal.getZ();
     }
 

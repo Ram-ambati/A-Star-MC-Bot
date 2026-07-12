@@ -22,9 +22,6 @@ public final class NeighborGenerator {
             Direction.EAST
     };
 
-    private static final int[][] DIAGONAL_OFFSETS = {
-        {1, 1}, {1, -1}, {-1, 1}, {-1, -1}
-    };
 
     private NeighborGenerator() {
     }

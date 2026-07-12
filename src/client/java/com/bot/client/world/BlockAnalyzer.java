@@ -6,7 +6,6 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.registry.tag.FluidTags;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
 
 /**
  * Stage 2 world analysis utilities.
@@ -59,7 +58,6 @@ public final class BlockAnalyzer {
         BlockPos groundPos = pos.down();
         BlockState ground = world.getBlockState(groundPos);
         return !isHazard(world, groundPos)
-                && ground.isSideSolidFullSquare(world, groundPos, Direction.UP)
                 && !ground.getCollisionShape(world, groundPos).isEmpty();
     }
 

@@ -35,10 +35,10 @@ public class TrajectoryRenderer {
     }
 
     public void register() {
-        WorldRenderEvents.BEFORE_DEBUG_RENDER.register(this::onBeforeDebugRender);
+        WorldRenderEvents.AFTER_ENTITIES.register(this::onAfterEntitiesRender);
     }
 
-    private void onBeforeDebugRender(WorldRenderContext context) {
+    private void onAfterEntitiesRender(WorldRenderContext context) {
         if (disabledDueToRenderError) {
             return;
         }
@@ -51,19 +51,54 @@ public class TrajectoryRenderer {
         }
     }
 
+    private static final int OPEN_SET_COLOR = 0x8800FF00; // Semi-transparent green
+    private static final int CLOSED_SET_COLOR = 0x88FF0000; // Semi-transparent red
+    private static final int PARTIAL_PATH_COLOR = 0x88FFFF00; // Semi-transparent yellow
+
     private void renderTrajectory(WorldRenderContext context) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player == null) {
             return;
         }
 
+        VertexConsumer consumer = context.consumers().getBuffer(RenderLayers.lines());
+        Vec3d cameraPos = context.worldState().cameraRenderState.pos;
+
+        com.bot.client.pathfinding.PathfinderState activeSearch = movementController.getActiveSearch();
+        if (activeSearch != null) {
+            // Draw open set
+            for (NavigationNode node : activeSearch.openSet) {
+                Vec3d center = toRelative(node.center(), cameraPos);
+                drawNodeMarkerSmall(consumer, center, OPEN_SET_COLOR, 1.0F);
+            }
+            
+            // Draw closed set
+            for (NavigationNode node : activeSearch.bestNodes.values()) {
+                Vec3d center = toRelative(node.center(), cameraPos);
+                drawNodeMarkerSmall(consumer, center, CLOSED_SET_COLOR, 1.0F);
+            }
+            
+            // Draw best partial path
+            if (activeSearch.bestNodeFound != null) {
+                NavigationNode cursor = activeSearch.bestNodeFound;
+                while (cursor != null) {
+                    Vec3d nodeCenter = toRelative(cursor.center(), cameraPos);
+                    if (cursor.parent() != null) {
+                        Vec3d prevNodeCenter = toRelative(cursor.parent().center(), cameraPos);
+                        drawLine(consumer,
+                                (float) prevNodeCenter.x, (float) prevNodeCenter.y, (float) prevNodeCenter.z,
+                                (float) nodeCenter.x, (float) nodeCenter.y, (float) nodeCenter.z,
+                                PARTIAL_PATH_COLOR, PATH_LINE_WIDTH);
+                    }
+                    cursor = cursor.parent();
+                }
+            }
+        }
+
         List<NavigationNode> path = movementController.getActivePathSnapshot();
         if (path.isEmpty()) {
             return;
         }
-
-        VertexConsumer consumer = context.consumers().getBuffer(RenderLayers.lines());
-        Vec3d cameraPos = context.worldState().cameraRenderState.pos;
 
         for (int i = 0; i < path.size(); i++) {
             NavigationNode node = path.get(i);
@@ -85,17 +120,41 @@ public class TrajectoryRenderer {
         }
     }
 
+    private static void drawNodeMarkerSmall(VertexConsumer consumer, Vec3d center, int color, float lineWidth) {
+        float minX = (float) center.x - 0.1F;
+        float minY = (float) center.y - 0.1F;
+        float minZ = (float) center.z - 0.1F;
+        float maxX = (float) center.x + 0.1F;
+        float maxY = (float) center.y + 0.1F;
+        float maxZ = (float) center.z + 0.1F;
+
+        drawLine(consumer, minX, minY, minZ, maxX, minY, minZ, color, lineWidth);
+        drawLine(consumer, maxX, minY, minZ, maxX, minY, maxZ, color, lineWidth);
+        drawLine(consumer, maxX, minY, maxZ, minX, minY, maxZ, color, lineWidth);
+        drawLine(consumer, minX, minY, maxZ, minX, minY, minZ, color, lineWidth);
+
+        drawLine(consumer, minX, maxY, minZ, maxX, maxY, minZ, color, lineWidth);
+        drawLine(consumer, maxX, maxY, minZ, maxX, maxY, maxZ, color, lineWidth);
+        drawLine(consumer, maxX, maxY, maxZ, minX, maxY, maxZ, color, lineWidth);
+        drawLine(consumer, minX, maxY, maxZ, minX, maxY, minZ, color, lineWidth);
+
+        drawLine(consumer, minX, minY, minZ, minX, maxY, minZ, color, lineWidth);
+        drawLine(consumer, maxX, minY, minZ, maxX, maxY, minZ, color, lineWidth);
+        drawLine(consumer, maxX, minY, maxZ, maxX, maxY, maxZ, color, lineWidth);
+        drawLine(consumer, minX, minY, maxZ, minX, maxY, maxZ, color, lineWidth);
+    }
+
     private static Vec3d toRelative(Vec3d worldPos, Vec3d cameraPos) {
         return worldPos.subtract(cameraPos);
     }
 
     private static void drawNodeMarker(VertexConsumer consumer, Vec3d center, int color, float lineWidth) {
-        float minX = (float) center.x - 0.2F;
-        float minY = (float) center.y - 0.2F;
-        float minZ = (float) center.z - 0.2F;
-        float maxX = (float) center.x + 0.2F;
-        float maxY = (float) center.y + 0.2F;
-        float maxZ = (float) center.z + 0.2F;
+        float minX = (float) center.x - 0.5F;
+        float minY = (float) center.y;
+        float minZ = (float) center.z - 0.5F;
+        float maxX = (float) center.x + 0.5F;
+        float maxY = (float) center.y + 2.0F;
+        float maxZ = (float) center.z + 0.5F;
 
         drawLine(consumer, minX, minY, minZ, maxX, minY, minZ, color, lineWidth);
         drawLine(consumer, maxX, minY, minZ, maxX, minY, maxZ, color, lineWidth);

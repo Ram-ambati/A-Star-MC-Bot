@@ -27,11 +27,6 @@ public class MovementTraverse extends MovementBase {
         }
 
         EnvironmentScan scan = EnvironmentScan.scan(world, player.getX(), player.getY(), player.getZ(), dx, dz, dy);
-        if (!scan.forwardStandable() && !scan.forwardStepUpStandable() && !scan.forwardStepDownStandable() 
-            && !scan.leftStandable() && !scan.rightStandable()) {
-            // Give up if blocked
-            return state.setStatus(MovementStatus.UNREACHABLE);
-        }
 
         boolean sprint = shouldSprint(player);
         double speed = WALK_SPEED * (sprint ? SPRINT_SPEED_MULTIPLIER : 1.0D);
@@ -42,9 +37,13 @@ public class MovementTraverse extends MovementBase {
         double velZ = horizontalDist > 0.0001D ? (dz / horizontalDist) * speed : 0;
         double velY = player.getVelocity().y;
 
-        if (scan.forwardStepUpStandable() && player.isOnGround()) {
-            state.setJump(true);
-            velY = JUMP_VELOCITY;
+        // Only jump if the target node is higher than our current position,
+        // and we are close enough to the block (or physically colliding with it) to clear it.
+        if (dy > 0.1D && player.isOnGround()) {
+            if (player.horizontalCollision || horizontalDist < 0.85D) {
+                state.setJump(true);
+                velY = JUMP_VELOCITY;
+            }
         }
 
         return state.setTargetVelocity(new Vec3d(velX, velY, velZ)).setSprint(sprint);

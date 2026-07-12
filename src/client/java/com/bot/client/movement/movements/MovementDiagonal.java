@@ -28,10 +28,6 @@ public class MovementDiagonal extends MovementBase {
         }
 
         EnvironmentScan scan = EnvironmentScan.scan(world, player.getX(), player.getY(), player.getZ(), dx, dz, dy);
-        if (!scan.forwardStandable() && !scan.forwardStepUpStandable() && !scan.forwardStepDownStandable()
-                && !scan.leftStandable() && !scan.rightStandable()) {
-            return state.setStatus(MovementStatus.UNREACHABLE);
-        }
 
         boolean sprint = shouldSprint(player);
         double speed = WALK_SPEED * (sprint ? SPRINT_SPEED_MULTIPLIER : 1.0D);

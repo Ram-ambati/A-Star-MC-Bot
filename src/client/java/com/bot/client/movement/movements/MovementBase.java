@@ -8,7 +8,7 @@ public abstract class MovementBase implements IMovement {
     protected final NavigationNode startNode;
     protected final NavigationNode endNode;
 
-    protected static final double WALK_SPEED = 0.15D;
+    protected static final double WALK_SPEED = 0.216D;
     protected static final double SPRINT_SPEED_MULTIPLIER = 1.30D;
     protected static final double DESCEND_SPEED_MULTIPLIER = 1.0D;
     protected static final double JUMP_VELOCITY = 0.42D;
@@ -21,7 +21,7 @@ public abstract class MovementBase implements IMovement {
     protected boolean shouldSprint(ClientPlayerEntity player) {
         try {
             return player.isCreative()
-                    || (player.getHungerManager() != null && player.getHungerManager().getFoodLevel() > 8);
+                    || (player.getHungerManager() != null && player.getHungerManager().getFoodLevel() > 6);
         } catch (Throwable ignored) {
             return false;
         }

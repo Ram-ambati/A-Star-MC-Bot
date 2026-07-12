@@ -41,6 +41,24 @@ public class MovementController {
     
     private int ticksAtCurrentNode = 0;
     private boolean enableVelocitySmoothing = false; // Disabled as per user request
+    
+    private com.bot.client.pathfinding.PathfinderState activeSearch = null;
+    
+    public com.bot.client.pathfinding.PathfinderState getActiveSearch() {
+        return activeSearch;
+    }
+    
+    public void startPathfinding(com.bot.client.pathfinding.PathfinderState state) {
+        this.activeSearch = state;
+        if (state != null) {
+            this.originalGoal = state.goal;
+            ClientPlayerEntity player = MinecraftClient.getInstance().player;
+            if (player != null) {
+                this.lastRecalculationPos = new Vec3d(player.getX(), player.getY(), player.getZ());
+            }
+            this.recalculationAttempts = 0;
+        }
+    }
 
     public void setTarget(double x, double y, double z) {
         setPath(List.of(new NavigationNode(BlockPos.ofFloored(x, y, z))));
@@ -63,9 +81,30 @@ public class MovementController {
     }
 
     public void setPlannedRoute(List<NavigationNode> route) {
+        if (route != null && !route.isEmpty()) {
+            ClientPlayerEntity player = MinecraftClient.getInstance().player;
+            if (player != null) {
+                Vec3d currentPos = new Vec3d(player.getX(), player.getY(), player.getZ());
+                int closestIndex = 0;
+                double minDistSq = Double.MAX_VALUE;
+                for (int i = 0; i < route.size(); i++) {
+                    Vec3d nodeCenter = nodeCenter(route.get(i).position());
+                    double distSq = currentPos.squaredDistanceTo(nodeCenter);
+                    if (distSq < minDistSq) {
+                        minDistSq = distSq;
+                        closestIndex = i;
+                    }
+                }
+                
+                // Only fast-forward if the closest node is reasonably nearby (e.g., within 5 blocks)
+                if (minDistSq < 25.0D) {
+                    route = route.subList(closestIndex, route.size());
+                }
+            }
+        }
+        
         setPath(route);
         if (route != null && !route.isEmpty()) {
-            originalGoal = route.getLast().position();
             ClientPlayerEntity player = MinecraftClient.getInstance().player;
             if (player != null) {
                 lastRecalculationPos = new Vec3d(player.getX(), player.getY(), player.getZ());
@@ -79,6 +118,7 @@ public class MovementController {
         originalGoal = null;
         recalculationAttempts = 0;
         lastRecalculationPos = null;
+        activeSearch = null;
         clearPathState();
     }
 
@@ -96,12 +136,32 @@ public class MovementController {
     }
 
     public void tick() {
-        if (!active) return;
         MinecraftClient client = MinecraftClient.getInstance();
         ClientPlayerEntity player = client.player;
+
+        if (activeSearch != null) {
+            LocalRoutePlanner.tick(client.world, activeSearch, 100);
+            if (activeSearch.status == com.bot.client.pathfinding.PathfinderState.Status.SUCCESS) {
+                if (activeSearch.finalRoute != null && !activeSearch.finalRoute.isEmpty()) {
+                    setPlannedRoute(activeSearch.finalRoute);
+                    if (player != null) {
+                        String pathType = LocalRoutePlanner.isGoal(activeSearch.finalRoute.get(activeSearch.finalRoute.size() - 1).position(), activeSearch.goal) ? "complete" : "partial";
+                        player.sendMessage(net.minecraft.text.Text.literal("Navigating to " + activeSearch.goal.getX() + " " + activeSearch.goal.getY() + " " + activeSearch.goal.getZ() + " (" + pathType + " path, " + activeSearch.finalRoute.size() + " nodes)"), false);
+                    }
+                }
+                activeSearch = null;
+            } else if (activeSearch.status == com.bot.client.pathfinding.PathfinderState.Status.FAILED) {
+                if (player != null) {
+                    player.sendMessage(net.minecraft.text.Text.literal("§cPath aborted! Could not reach destination."), false);
+                }
+                clearTarget();
+            }
+        }
+
+        if (!active) return;
         if (player == null) return;
 
-        if (originalGoal != null && lastRecalculationPos != null) {
+        if (originalGoal != null && lastRecalculationPos != null && activeSearch == null) {
             Vec3d currentPos = new Vec3d(player.getX(), player.getY(), player.getZ());
             double distTraveled = currentPos.distanceTo(lastRecalculationPos);
             if (distTraveled >= RECALCULATION_DISTANCE && recalculationAttempts < MAX_RECALCULATION_ATTEMPTS) {
@@ -114,14 +174,15 @@ public class MovementController {
             if (currentNode == null) {
                 advanceToNextNode(player);
                 if (!active) {
-                    player.sendMessage(net.minecraft.text.Text.literal("§aReached destination!"), false);
+                    handlePathCompletion(client, player);
                     return;
                 }
             }
             
             ticksAtCurrentNode++;
             if (ticksAtCurrentNode > MAX_TICKS_AT_NODE) {
-                recalculateRoute(client.world, player.getBlockPos(), originalGoal);
+                clearPathState();
+                if (activeSearch == null) recalculateRoute(client.world, player.getBlockPos(), originalGoal);
                 return;
             }
 
@@ -131,8 +192,8 @@ public class MovementController {
                 if (currentMovement == null) {
                     advanceToNextNode(player);
                     if (!active) {
-                        finishNavigation(client, player);
-                        player.sendMessage(net.minecraft.text.Text.literal("§aReached destination!"), false);
+                        handlePathCompletion(client, player);
+                        return;
                     }
                     continue;
                 }
@@ -143,13 +204,13 @@ public class MovementController {
             if (state.getStatus() == MovementStatus.SUCCESS) {
                 advanceToNextNode(player);
                 if (!active) {
-                    finishNavigation(client, player);
-                    player.sendMessage(net.minecraft.text.Text.literal("§aReached destination!"), false);
+                    handlePathCompletion(client, player);
                     return;
                 }
                 continue; // Process next node immediately in the same tick
             } else if (state.getStatus() == MovementStatus.UNREACHABLE) {
-                recalculateRoute(client.world, player.getBlockPos(), originalGoal);
+                clearPathState();
+                if (activeSearch == null) recalculateRoute(client.world, player.getBlockPos(), originalGoal);
                 return;
             }
 
@@ -157,18 +218,28 @@ public class MovementController {
             break;
         }
     }
+
+    private void handlePathCompletion(MinecraftClient client, net.minecraft.client.network.ClientPlayerEntity player) {
+        if (originalGoal != null && !LocalRoutePlanner.isGoal(player.getBlockPos(), originalGoal)) {
+            clearPathState();
+            if (activeSearch == null) recalculateRoute(client.world, player.getBlockPos(), originalGoal);
+        } else {
+            finishNavigation(client, player);
+            player.sendMessage(net.minecraft.text.Text.literal("§aReached destination!"), false);
+        }
+    }
     
     private void recalculateRoute(ClientWorld world, BlockPos start, BlockPos goal) {
         if (world != null && recalculationAttempts < MAX_RECALCULATION_ATTEMPTS) {
-            List<NavigationNode> newRoute = LocalRoutePlanner.findRoute(world, start, goal);
-            if (!newRoute.isEmpty()) {
-                recalculationAttempts++;
-                setPlannedRoute(newRoute);
-            } else {
-                finishNavigation(MinecraftClient.getInstance(), MinecraftClient.getInstance().player);
+            recalculationAttempts++;
+            com.bot.client.pathfinding.PathfinderState state = LocalRoutePlanner.beginRoute(world, start, goal, 1.5D);
+            if (state != null) {
+                this.activeSearch = state;
+                // Leave originalGoal and lastRecalculationPos intact while searching
             }
         } else {
             finishNavigation(MinecraftClient.getInstance(), MinecraftClient.getInstance().player);
+            MinecraftClient.getInstance().player.sendMessage(net.minecraft.text.Text.literal("§cPath aborted! Could not reach destination."), false);
         }
     }
 
@@ -237,9 +308,10 @@ public class MovementController {
     private void finishNavigation(MinecraftClient client, ClientPlayerEntity player) {
         active = false; currentNode = null; previousNode = null; currentMovement = null; remainingNodes.clear(); originalGoal = null; recalculationAttempts = 0; stopControlledMovement(player);
         isSpoofing = false;
+        activeSearch = null;
     }
 
-    private void clearPathState() { remainingNodes.clear(); currentNode = null; previousNode = null; currentMovement = null; smoothedVelocity = Vec3d.ZERO; originalGoal = null; recalculationAttempts = 0; lastRecalculationPos = null; stopControlledMovement(); isSpoofing = false; }
+    private void clearPathState() { active = false; remainingNodes.clear(); currentNode = null; previousNode = null; currentMovement = null; smoothedVelocity = Vec3d.ZERO; stopControlledMovement(); isSpoofing = false; }
     private void stopControlledMovement() { if (MinecraftClient.getInstance().player != null) stopControlledMovement(MinecraftClient.getInstance().player); }
     private void stopControlledMovement(ClientPlayerEntity player) { if (!appliedMovement) return; player.setVelocity(0.0D, player.getVelocity().y, 0.0D); smoothedVelocity = Vec3d.ZERO; appliedMovement = false; }
     private static NavigationNode copyNode(NavigationNode node) { return new NavigationNode(node.position(), node.movementCost(), node.estimatedCost(), node.parent()); }
