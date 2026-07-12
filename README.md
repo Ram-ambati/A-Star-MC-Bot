@@ -1,6 +1,11 @@
 # A* Minecraft Bot Navigation (Fabric 1.21.1)
 
-A Java-based, fully autonomous client-side navigation bot built for Minecraft 1.21.1 using the Fabric API. This project implements a robust A* (A-Star) pathfinding engine, dynamic real-time movement execution, and live 3D trajectory rendering directly into the game world.
+![Java 21](https://img.shields.io/badge/Java-21-orange?style=flat-square&logo=java)
+![Minecraft 1.21.11](https://img.shields.io/badge/Minecraft-1.21.11-brightgreen?style=flat-square)
+![Fabric 0.19.2](https://img.shields.io/badge/Fabric-0.19.2-lightgrey?style=flat-square)
+![License MIT](https://img.shields.io/badge/License-MIT-blue?style=flat-square)
+
+A Java-based, fully autonomous client-side navigation bot built for Minecraft 1.21.11 using the Fabric API. This project implements a robust A* (A-Star) pathfinding engine, dynamic real-time movement execution, and live 3D trajectory rendering directly into the game world.
 
 ## 🚀 Core Features
 
@@ -65,7 +70,7 @@ The bot's codebase is logically separated into highly modular components within 
 ### Getting Started
 1. **Clone the repository:**
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/Ram-ambati/A-Star-MC-Bot.git
    ```
 2. **Open the project** in your IDE. Gradle will automatically sync and download the required Loom toolchain and Fabric APIs.
 
