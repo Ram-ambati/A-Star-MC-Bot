@@ -23,34 +23,45 @@ public class Command {
                 .then(ClientCommandManager.argument("x", doubleArg())
                         .then(ClientCommandManager.argument("y", doubleArg())
                                 .then(ClientCommandManager.argument("z", doubleArg())
-                                        .executes(ctx -> {
-                                            double x = getDouble(ctx, "x");
-                                            double y = getDouble(ctx, "y");
-                                            double z = getDouble(ctx, "z");
+                                        .executes(ctx -> executeRouteCommand(ctx, movementController, true)))));
 
-                                            MinecraftClient client = MinecraftClient.getInstance();
-                                            ClientWorld world = client.world;
-                                            if (world == null || client.player == null) {
-                                                return 0;
-                                            }
-
-                                             BlockPos start = client.player.getBlockPos();
-                                             BlockPos goal = BlockPos.ofFloored(x, y, z);
-                                             com.bot.client.pathfinding.PathfinderState state = LocalRoutePlanner.beginRoute(world, start, goal, 1.5D);
-                                             if (state != null) {
-                                                 movementController.startPathfinding(state);
-                                                 if (client.inGameHud != null) {
-                                                     client.inGameHud.getChatHud().addMessage(Text.literal("§eCalculating path to " + x + " " + y + " " + z + "..."));
-                                                 }
-                                             } else {
-                                                 if (client.inGameHud != null) {
-                                                     client.inGameHud.getChatHud().addMessage(Text.literal("§cFailed to initialize pathfinder."));
-                                                 }
-                                             }
-                                             return 1;
-                                        }))));
+        LiteralArgumentBuilder<FabricClientCommandSource> pathCommand = ClientCommandManager.literal("path")
+                .then(ClientCommandManager.argument("x", doubleArg())
+                        .then(ClientCommandManager.argument("y", doubleArg())
+                                .then(ClientCommandManager.argument("z", doubleArg())
+                                        .executes(ctx -> executeRouteCommand(ctx, movementController, false)))));
 
         net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback.EVENT
-                .register((dispatcher, registryAccess) -> dispatcher.register(goCommand));
+                .register((dispatcher, registryAccess) -> {
+                    dispatcher.register(goCommand);
+                    dispatcher.register(pathCommand);
+                });
+    }
+
+    private static int executeRouteCommand(com.mojang.brigadier.context.CommandContext<FabricClientCommandSource> ctx, MovementController movementController, boolean execute) {
+        double x = getDouble(ctx, "x");
+        double y = getDouble(ctx, "y");
+        double z = getDouble(ctx, "z");
+
+        MinecraftClient client = MinecraftClient.getInstance();
+        ClientWorld world = client.world;
+        if (world == null || client.player == null) {
+            return 0;
+        }
+
+         BlockPos start = client.player.getBlockPos();
+         BlockPos goal = BlockPos.ofFloored(x, y, z);
+         com.bot.client.pathfinding.PathfinderState state = LocalRoutePlanner.beginRoute(world, start, goal, 1.5D);
+         if (state != null) {
+             movementController.startPathfinding(state, execute);
+             if (client.inGameHud != null) {
+                 client.inGameHud.getChatHud().addMessage(Text.literal("§eCalculating path to " + x + " " + y + " " + z + "..."));
+             }
+         } else {
+             if (client.inGameHud != null) {
+                 client.inGameHud.getChatHud().addMessage(Text.literal("§cFailed to initialize pathfinder."));
+             }
+         }
+         return 1;
     }
 }

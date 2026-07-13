@@ -17,8 +17,6 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 
 public class MovementController {
-    private static final double VELOCITY_SMOOTHING_FACTOR = 0.20D;
-    private static final double DIRECTION_CHANGE_THRESHOLD = 0.4D;
     private static final int MAX_TICKS_AT_NODE = 60; // 3 seconds
 
     public static boolean isSpoofing = false;
@@ -40,16 +38,18 @@ public class MovementController {
     private static final double RECALCULATION_DISTANCE = 30.0D;
     
     private int ticksAtCurrentNode = 0;
-    private boolean enableVelocitySmoothing = false; // Disabled as per user request
     
     private com.bot.client.pathfinding.PathfinderState activeSearch = null;
+    private boolean executePathWhenFound = true;
+    private List<NavigationNode> previewRoute = null;
     
     public com.bot.client.pathfinding.PathfinderState getActiveSearch() {
         return activeSearch;
     }
     
-    public void startPathfinding(com.bot.client.pathfinding.PathfinderState state) {
+    public void startPathfinding(com.bot.client.pathfinding.PathfinderState state, boolean execute) {
         this.activeSearch = state;
+        this.executePathWhenFound = execute;
         if (state != null) {
             this.originalGoal = state.goal;
             ClientPlayerEntity player = MinecraftClient.getInstance().player;
@@ -119,6 +119,7 @@ public class MovementController {
         recalculationAttempts = 0;
         lastRecalculationPos = null;
         activeSearch = null;
+        previewRoute = null;
         clearPathState();
     }
 
@@ -129,6 +130,9 @@ public class MovementController {
     }
 
     public List<NavigationNode> getActivePathSnapshot() {
+        if (!active && previewRoute != null) {
+            return new ArrayList<>(previewRoute);
+        }
         List<NavigationNode> snapshot = new ArrayList<>();
         if (currentNode != null) { snapshot.add(copyNode(currentNode)); }
         for (NavigationNode node : remainingNodes) { snapshot.add(copyNode(node)); }
@@ -143,10 +147,17 @@ public class MovementController {
             LocalRoutePlanner.tick(client.world, activeSearch, 100);
             if (activeSearch.status == com.bot.client.pathfinding.PathfinderState.Status.SUCCESS) {
                 if (activeSearch.finalRoute != null && !activeSearch.finalRoute.isEmpty()) {
-                    setPlannedRoute(activeSearch.finalRoute);
-                    if (player != null) {
-                        String pathType = LocalRoutePlanner.isGoal(activeSearch.finalRoute.get(activeSearch.finalRoute.size() - 1).position(), activeSearch.goal) ? "complete" : "partial";
-                        player.sendMessage(net.minecraft.text.Text.literal("Navigating to " + activeSearch.goal.getX() + " " + activeSearch.goal.getY() + " " + activeSearch.goal.getZ() + " (" + pathType + " path, " + activeSearch.finalRoute.size() + " nodes)"), false);
+                    String pathType = LocalRoutePlanner.isGoal(activeSearch.finalRoute.get(activeSearch.finalRoute.size() - 1).position(), activeSearch.goal) ? "complete" : "partial";
+                    if (executePathWhenFound) {
+                        setPlannedRoute(activeSearch.finalRoute);
+                        if (player != null) {
+                            player.sendMessage(net.minecraft.text.Text.literal("Navigating to " + activeSearch.goal.getX() + " " + activeSearch.goal.getY() + " " + activeSearch.goal.getZ() + " (" + pathType + " path, " + activeSearch.finalRoute.size() + " nodes)"), false);
+                        }
+                    } else {
+                        previewRoute = activeSearch.finalRoute;
+                        if (player != null) {
+                            player.sendMessage(net.minecraft.text.Text.literal("§aPath preview calculated to " + activeSearch.goal.getX() + " " + activeSearch.goal.getY() + " " + activeSearch.goal.getZ() + " (" + pathType + " path, " + activeSearch.finalRoute.size() + " nodes)"), false);
+                        }
                     }
                 }
                 activeSearch = null;
@@ -221,6 +232,9 @@ public class MovementController {
 
     private void handlePathCompletion(MinecraftClient client, net.minecraft.client.network.ClientPlayerEntity player) {
         if (originalGoal != null && !LocalRoutePlanner.isGoal(player.getBlockPos(), originalGoal)) {
+            // We finished a partial path segment but haven't reached the true goal.
+            // Reset the recalculation counter so we can keep trying from the new position.
+            recalculationAttempts = 0;
             clearPathState();
             if (activeSearch == null) recalculateRoute(client.world, player.getBlockPos(), originalGoal);
         } else {
@@ -235,6 +249,7 @@ public class MovementController {
             com.bot.client.pathfinding.PathfinderState state = LocalRoutePlanner.beginRoute(world, start, goal, 1.5D);
             if (state != null) {
                 this.activeSearch = state;
+                this.executePathWhenFound = true; // Recalculations are always executions
                 // Leave originalGoal and lastRecalculationPos intact while searching
             }
         } else {
@@ -246,44 +261,22 @@ public class MovementController {
     private void applyMovementState(ClientPlayerEntity player, MovementState state) {
         player.setSneaking(state.isSneak());
         player.setSprinting(state.isSprint());
-        
 
-
+        // Step-up jumps (e.g. climbing a block) — only call when on ground.
+        // Water swimming is handled by KeyboardInputMixin (playerInput.jump = true when in water).
+        // User land jumps are also passed through by the mixin.
         if (state.isJump() && player.isOnGround()) {
             player.jump();
         }
 
         Vec3d targetVel = state.getTargetVelocity();
-        double targetVelocityX = targetVel.x;
-        double targetVelocityY = targetVel.y;
-        double targetVelocityZ = targetVel.z;
-        
-        if (!enableVelocitySmoothing) {
-            smoothedVelocity = new Vec3d(targetVelocityX, targetVelocityY, targetVelocityZ);
-        } else {
-            double adaptiveSmoothingFactor = VELOCITY_SMOOTHING_FACTOR;
-            if (!player.isOnGround()) {
-                adaptiveSmoothingFactor = 0.12D;
-            } else {
-                Vec3d targetDir = new Vec3d(targetVelocityX, 0.0D, targetVelocityZ);
-                Vec3d prevDir = new Vec3d(smoothedVelocity.x, 0.0D, smoothedVelocity.z);
-                double targetMag = targetDir.length();
-                double prevMag = prevDir.length();
-                if (targetMag > 0.0001D && prevMag > 0.0001D) {
-                    double dot = (targetDir.x * prevDir.x + targetDir.z * prevDir.z) / (targetMag * prevMag);
-                    if (dot < DIRECTION_CHANGE_THRESHOLD) adaptiveSmoothingFactor = 0.12D;
-                }
-            }
-    
-            if (state.isSneak()) adaptiveSmoothingFactor = Math.min(adaptiveSmoothingFactor, 0.15D);
-    
-            double smoothedVelX = smoothedVelocity.x * (1.0D - adaptiveSmoothingFactor) + targetVelocityX * adaptiveSmoothingFactor;
-            double smoothedVelZ = smoothedVelocity.z * (1.0D - adaptiveSmoothingFactor) + targetVelocityZ * adaptiveSmoothingFactor;
-            smoothedVelocity = new Vec3d(smoothedVelX, targetVelocityY, smoothedVelZ);
-        }
+        // Always preserve Minecraft's natural Y physics (gravity, jump arc, swim).
+        // The jump() call above and mixin's playerInput.jump handle Y — we just don't override it.
+        double velY = player.getVelocity().y;
+        smoothedVelocity = new Vec3d(targetVel.x, velY, targetVel.z);
 
         player.setVelocity(smoothedVelocity);
-        
+
         if (Math.abs(smoothedVelocity.x) > 0.001D || Math.abs(smoothedVelocity.z) > 0.001D) {
             spoofedYaw = (float) Math.toDegrees(Math.atan2(-smoothedVelocity.x, smoothedVelocity.z));
             isSpoofing = true;
@@ -311,7 +304,7 @@ public class MovementController {
         activeSearch = null;
     }
 
-    private void clearPathState() { active = false; remainingNodes.clear(); currentNode = null; previousNode = null; currentMovement = null; smoothedVelocity = Vec3d.ZERO; stopControlledMovement(); isSpoofing = false; }
+    private void clearPathState() { active = false; remainingNodes.clear(); currentNode = null; previousNode = null; currentMovement = null; smoothedVelocity = Vec3d.ZERO; stopControlledMovement(); isSpoofing = false; previewRoute = null; }
     private void stopControlledMovement() { if (MinecraftClient.getInstance().player != null) stopControlledMovement(MinecraftClient.getInstance().player); }
     private void stopControlledMovement(ClientPlayerEntity player) { if (!appliedMovement) return; player.setVelocity(0.0D, player.getVelocity().y, 0.0D); smoothedVelocity = Vec3d.ZERO; appliedMovement = false; }
     private static NavigationNode copyNode(NavigationNode node) { return new NavigationNode(node.position(), node.movementCost(), node.estimatedCost(), node.parent()); }

@@ -19,6 +19,9 @@ public abstract class MovementBase implements IMovement {
     }
 
     protected boolean shouldSprint(ClientPlayerEntity player) {
+        // Don't sprint in water — vanilla swim speed is walk speed.
+        // Sprinting while jumping out of water looks like a cheat/exploit.
+        if (player.isTouchingWater()) return false;
         try {
             return player.isCreative()
                     || (player.getHungerManager() != null && player.getHungerManager().getFoodLevel() > 6);

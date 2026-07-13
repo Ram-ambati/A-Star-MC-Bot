@@ -1,6 +1,5 @@
 package com.bot.client.movement.movements;
 
-import com.bot.client.world.EnvironmentScan;
 import com.bot.client.world.NavigationNode;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
@@ -22,31 +21,34 @@ public class MovementTraverse extends MovementBase {
         double dz = target.z - player.getZ();
         double horizontalDist = getHorizontalDistance(player, target);
 
-        if (horizontalDist <= 0.35D && Math.abs(dy) <= 0.35D) {
+        boolean airborne = !player.isOnGround() && !player.isTouchingWater();
+
+        // Relax the Y tolerance when airborne so the bot advances nodes during a jump
+        // instead of oscillating around the node waiting for the player to land.
+        // Also relax horizontal slightly when falling so descent nodes complete cleanly.
+        double tolXZ = airborne ? 0.6D : 0.35D;
+        double tolY  = airborne ? 3.0D : 0.35D; // free-fall up to 3 blocks is fine
+
+        if (horizontalDist <= tolXZ && Math.abs(dy) <= tolY) {
             return state.setStatus(MovementStatus.SUCCESS);
         }
 
-        EnvironmentScan scan = EnvironmentScan.scan(world, player.getX(), player.getY(), player.getZ(), dx, dz, dy);
-
         boolean sprint = shouldSprint(player);
         double speed = WALK_SPEED * (sprint ? SPRINT_SPEED_MULTIPLIER : 1.0D);
-        
 
-
+        // XZ velocity is always applied — even when airborne — to maintain forward motion.
         double velX = horizontalDist > 0.0001D ? (dx / horizontalDist) * speed : 0;
         double velZ = horizontalDist > 0.0001D ? (dz / horizontalDist) * speed : 0;
-        double velY = player.getVelocity().y;
 
-        // Only jump if the target node is higher than our current position,
-        // and we are close enough to the block (or physically colliding with it) to clear it.
-        if (dy > 0.1D && player.isOnGround()) {
+        // Water swimming is handled entirely by KeyboardInputMixin (playerInput.jump = true).
+        // On land: jump only when we need to step up a block.
+        if (!player.isTouchingWater() && dy > 0.5D && player.isOnGround()) {
             if (player.horizontalCollision || horizontalDist < 0.85D) {
                 state.setJump(true);
-                velY = JUMP_VELOCITY;
             }
         }
+        // Free fall (airborne, no jump needed): just maintain XZ and let gravity do its thing.
 
-        return state.setTargetVelocity(new Vec3d(velX, velY, velZ)).setSprint(sprint);
+        return state.setTargetVelocity(new Vec3d(velX, player.getVelocity().y, velZ)).setSprint(sprint);
     }
 }
-

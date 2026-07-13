@@ -20,8 +20,8 @@ public final class BlockAnalyzer {
     public static final double FLAT_MOVE_COST = 1.0D;
     public static final double STEP_UP_COST = 1.35D;
     public static final double STEP_DOWN_COST = 0.85D;
-    public static final double WATER_MOVE_COST = 3.0D;
-    public static final double HAZARD_MOVE_COST = 25.0D;
+    public static final double WATER_MOVE_COST = 12.0D; // Strong preference for dry land over swimming
+    public static final double HAZARD_MOVE_COST = 10.0D; // Penalty for adjacent hazards
     public static final double BLOCKED_MOVE_COST = Double.POSITIVE_INFINITY;
 
     private BlockAnalyzer() {
@@ -58,7 +58,7 @@ public final class BlockAnalyzer {
         BlockPos groundPos = pos.down();
         BlockState ground = world.getBlockState(groundPos);
         return !isHazard(world, groundPos)
-                && !ground.getCollisionShape(world, groundPos).isEmpty();
+                && (!ground.getCollisionShape(world, groundPos).isEmpty() || isWater(world, groundPos));
     }
 
     public static boolean isHazard(BlockPos pos) {
@@ -81,7 +81,9 @@ public final class BlockAnalyzer {
                 || state.isOf(Blocks.CAMPFIRE)
                 || state.isOf(Blocks.SOUL_CAMPFIRE)
                 || state.isOf(Blocks.SWEET_BERRY_BUSH)
-                || state.isOf(Blocks.POWDER_SNOW);
+                || state.isOf(Blocks.POWDER_SNOW)
+                || state.isOf(Blocks.COBWEB)
+                || state.isOf(Blocks.WITHER_ROSE);
     }
 
     public static boolean isObstacle(BlockPos pos) {
@@ -136,16 +138,18 @@ public final class BlockAnalyzer {
     }
 
     private static boolean canDescendTo(ClientWorld world, BlockPos from, BlockPos to, int dySteps) {
-        // dy is negative, so we're descending |dy| blocks
-        // Validate that each step down has ground and no hazards
-        BlockPos current = from;
-        for (int i = 0; i < Math.abs(dySteps); i++) {
-            BlockPos nextStep = current.down();
-            if (!hasGroundBelow(world, nextStep) || isHazard(world, nextStep.down())) {
+        // dy is negative, so we're descending |dy| blocks.
+        // We move horizontally to 'to.X', 'to.Z' at 'from.Y', then fall to 'to.Y'.
+        for (int y = from.getY(); y > to.getY(); y--) {
+            BlockPos fallPos = new BlockPos(to.getX(), y, to.getZ());
+            if (!isPassable(world, fallPos) || !isPassable(world, fallPos.up())) {
                 return false;
             }
-            current = nextStep;
+            if (isHazard(world, fallPos) || isHazard(world, fallPos.up())) {
+                return false;
+            }
         }
+        
         // Final destination must be standable
         return canStandAt(world, to);
     }
@@ -175,8 +179,11 @@ public final class BlockAnalyzer {
             cost += WATER_MOVE_COST;
         }
 
-        if (isHazard(world, to) || isHazard(world, to.down())) {
-            cost += HAZARD_MOVE_COST;
+        // Add penalty for pathing directly adjacent to hazards (e.g. hugging lava edges)
+        if (isHazard(world, to.north()) || isHazard(world, to.south()) ||
+            isHazard(world, to.east()) || isHazard(world, to.west()) ||
+            isHazard(world, to.up().up())) {
+            cost += HAZARD_MOVE_COST; // 10.0 penalty to heavily discourage, but allow if it's the only way
         }
 
         return cost;
@@ -189,6 +196,7 @@ public final class BlockAnalyzer {
 
         BlockState state = world.getBlockState(pos);
         return state.isAir()
+                || isWater(world, pos)
                 || (state.getFluidState().isEmpty() && state.getCollisionShape(world, pos).isEmpty());
     }
 

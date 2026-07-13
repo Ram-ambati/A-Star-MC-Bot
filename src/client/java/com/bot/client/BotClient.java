@@ -17,8 +17,17 @@ import org.slf4j.Logger;
  */
 public class BotClient implements ClientModInitializer {
 	private static final Logger LOGGER = LogUtils.getLogger();
-	private final MovementController movementController = new MovementController();
-	private final TrajectoryRenderer trajectoryRenderer = new TrajectoryRenderer(movementController);
+	private static MovementController movementController;
+	private final TrajectoryRenderer trajectoryRenderer;
+
+	public BotClient() {
+		movementController = new MovementController();
+		trajectoryRenderer = new TrajectoryRenderer(movementController);
+	}
+
+	public static MovementController getMovementController() {
+		return movementController;
+	}
 
 	@Override
 	public void onInitializeClient() {
